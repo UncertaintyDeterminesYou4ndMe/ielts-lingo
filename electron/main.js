@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, dialog } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const { spawn } = require("node:child_process");
@@ -88,7 +88,8 @@ function waitForServer(url, timeoutMs = 30000) {
 
 function startNextServer() {
   const appRoot = getAppRoot();
-  const nextBin = path.join(appRoot, "node_modules", ".bin", process.platform === "win32" ? "next.cmd" : "next");
+  const isWin = process.platform === "win32";
+  const nextBin = path.join(appRoot, "node_modules", ".bin", isWin ? "next.cmd" : "next");
 
   log("启动 Next.js 服务，工作目录:", appRoot);
 
@@ -96,6 +97,8 @@ function startNextServer() {
     cwd: appRoot,
     env: { ...process.env },
     stdio: "pipe",
+    // Windows 上 .cmd 脚本必须通过 shell 执行
+    shell: isWin,
   });
 
   serverProcess.stdout.on("data", (data) => {
@@ -108,6 +111,10 @@ function startNextServer() {
 
   serverProcess.on("error", (err) => {
     log("启动 Next.js 服务失败:", err.message);
+  });
+
+  serverProcess.on("exit", (code) => {
+    log("Next.js 服务已退出，退出码:", code);
   });
 
   return waitForServer(SERVER_URL);
@@ -131,6 +138,13 @@ function createWindow(url) {
     mainWindow.show();
   });
 
+  // 保险：加载完成后也显示一次
+  mainWindow.webContents.once("did-finish-load", () => {
+    if (mainWindow && !mainWindow.isVisible()) {
+      mainWindow.show();
+    }
+  });
+
   mainWindow.loadURL(url);
 
   mainWindow.on("closed", () => {
@@ -139,15 +153,21 @@ function createWindow(url) {
 }
 
 async function boot() {
-  if (devServerUrl) {
-    log("开发模式：连接到", devServerUrl);
-    await waitForServer(devServerUrl);
-    createWindow(devServerUrl);
-  } else {
-    initUserData();
-    initFfmpeg();
-    await startNextServer();
-    createWindow(SERVER_URL);
+  try {
+    if (devServerUrl) {
+      log("开发模式：连接到", devServerUrl);
+      await waitForServer(devServerUrl);
+      createWindow(devServerUrl);
+    } else {
+      initUserData();
+      initFfmpeg();
+      await startNextServer();
+      createWindow(SERVER_URL);
+    }
+  } catch (err) {
+    log("启动失败:", err.message);
+    dialog.showErrorBox("IELTS Lingo 启动失败", err.message);
+    app.quit();
   }
 }
 
@@ -164,8 +184,8 @@ app.on("window-all-closed", () => {
 });
 
 app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
+  if (BrowserWindow.getAllWindows().length === 0 && SERVER_URL) {
+    createWindow(SERVER_URL);
   }
 });
 

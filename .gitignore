@@ -39,3 +39,18 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local sqlite db + seed source cache
+/data/*.db
+/data/*.db-*
+/scripts/seed/.cache
+
+# electron-builder 输出
+/dist/
+
+# 打包时下载的 ffmpeg 二进制（按平台不同，不应提交）
+/resources/ffmpeg/*
+!/resources/ffmpeg/.gitkeep
+
+# AI 生成的听力音频（体积大、可重新生成）
+/public/audio/

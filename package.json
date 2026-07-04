@@ -1,26 +1,98 @@
 {
   "name": "ielts-lingo",
   "version": "0.1.0",
+  "description": "本地自用的雅思学习应用",
+  "author": "IELTS Lingo",
   "private": true,
+  "main": "electron/main.js",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "seed": "node -e \"require('fs').mkdirSync('data',{recursive:true})\" && drizzle-kit push && tsx scripts/seed/index.ts",
+    "db:push": "drizzle-kit push",
+    "electron:dev": "cross-env ELECTRON_DEV_SERVER_URL=http://localhost:3000 electron .",
+    "electron:build": "npm run seed && npm run build && electron-builder",
+    "electron:pack": "electron-builder",
+    "dist": "npm run seed && npm run build && electron-builder --publish=never"
+  },
+  "build": {
+    "appId": "com.ieltslingo.app",
+    "productName": "IELTS Lingo",
+    "copyright": "Copyright © 2026",
+    "directories": {
+      "output": "dist",
+      "buildResources": "resources"
+    },
+    "files": [
+      ".next/**/*",
+      "public/**/*",
+      "data/app.db",
+      "electron/**/*",
+      "node_modules/**/*",
+      "package.json",
+      "next.config.ts",
+      ".env.example",
+      "!node_modules/.cache",
+      "!**/*.map"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/ffmpeg",
+        "to": "ffmpeg",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
+    "better-sqlite3": "^12.11.1",
+    "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.45.2",
+    "msedge-tts": "^2.0.6",
     "next": "16.2.10",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "ts-fsrs": "^5.4.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/adm-zip": "^0.5.8",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "adm-zip": "^0.5.18",
+    "cross-env": "^7.0.3",
+    "drizzle-kit": "^0.31.10",
+    "electron": "^43.0.0",
+    "electron-builder": "^26.15.3",
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
     "tailwindcss": "^4",
+    "tsx": "^4.22.5",
     "typescript": "^5"
   }
 }

@@ -25,6 +25,9 @@
       "output": "dist",
       "buildResources": "resources"
     },
+    "asar": false,
+    "afterPack": "electron/after-pack.js",
+    "buildDependenciesFromSource": true,
     "files": [
       ".next/**/*",
       "public/**/*",

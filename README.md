@@ -152,36 +152,53 @@ brew install ffmpeg
 Whisper 模型（`Xenova/whisper-base.en`）首次调用时会自动下载权重到本地缓存，
 之后离线可用。
 
-## 从源码打包 Windows 安装程序
+## 打包桌面安装包（跨平台）
 
 项目已配置 [Electron](https://www.electronjs.org/) + [electron-builder](https://www.electron.build/)
 和 GitHub Actions 自动构建。
 
-### 本地手动打包
+> **为什么不能一台机器打全平台**：应用依赖原生模块 `better-sqlite3` 和平台专属的 ffmpeg 二进制，
+> 原生模块无法交叉编译。所以 **macOS 包必须在 Mac 上构建，Windows 包必须在 Windows（或 CI 的
+> Windows 运行器）上构建**。
 
-需要 Windows 电脑（用于下载 Windows 版 ffmpeg 并构建 native 模块）：
+关键构建配置（见 `package.json` 的 `build` 字段与 `next.config.ts`，都有注释说明踩过的坑）：
+- `asar: false` — 让 `Resources/app/` 是真实目录，Next 才能读 `.next` 和 `node_modules`；
+- `buildDependenciesFromSource: true` — 强制从源码把 `better-sqlite3` 编成 Electron 的 ABI
+  （否则会装成 Node 版预编译包，运行时报 `NODE_MODULE_VERSION` 不匹配）；
+- `afterPack: electron/after-pack.js` — 补回 electron-builder 会丢弃的 `.next/node_modules`
+  别名符号链接（Turbopack 靠它解析原生外部模块，缺失会报 `Failed to load external module`）；
+- `electron/main.js` 用 `process.execPath + ELECTRON_RUN_AS_NODE` 拉起 Next，不依赖目标机安装 node。
+
+### macOS 本地打包（.dmg）
 
 ```bash
-# 1. 安装依赖
 npm install
 
-# 2. 下载 Windows ffmpeg 到 resources/ffmpeg/ffmpeg.exe
-#    可从 https://www.gyan.dev/ffmpeg/builds/ 下载 essentials 版本
+# 下载 macOS 版 ffmpeg 到 resources/ffmpeg/ffmpeg（静态二进制，Apple Silicon 用 arm64 版）
+#   arm64: https://www.osxexperts.net/  ·  Intel: https://evermeet.cx/ffmpeg/
+#   放好后：chmod +x resources/ffmpeg/ffmpeg
 
-# 3. 初始化词库并构建
+npm run seed          # 首次初始化词库（已存在则跳过）
+npm run build
+npx electron-builder --mac --publish=never
+```
+
+输出在 `dist/IELTS Lingo-<版本>-arm64.dmg`。默认只打当前架构（Apple Silicon 出 arm64）；
+如需同时支持 Intel Mac，用 `--mac --arm64 --x64`（需两种架构的 ffmpeg，构建更慢）。
+
+### Windows 本地打包（.exe）
+
+需要 Windows 电脑：
+
+```bash
+npm install
+# 下载 Windows ffmpeg 到 resources/ffmpeg/ffmpeg.exe（https://www.gyan.dev/ffmpeg/builds/ essentials 版）
 npm run seed
 npm run build
-
-# 4. 打包
 npx electron-builder --win --x64
 ```
 
-输出在 `dist/` 目录下。
-
-> 注意：打包过程中 electron-builder 会把 `better-sqlite3` 等 native 模块重编成 Electron 版本。
-> 打包后如果继续在本地开发，需要执行 `npm rebuild better-sqlite3` 恢复 Node 版本。
-
-### 用 GitHub Actions 自动构建（推荐）
+### 用 GitHub Actions 自动构建 Windows（推荐）
 
 1. 把项目 push 到 GitHub
 2. 打一个版本 tag：
@@ -191,6 +208,15 @@ npx electron-builder --win --x64
    ```
 3. GitHub Actions 会自动在 Windows 运行器上构建 `.exe` 并上传到 Release
 4. 学生到 Release 页面下载安装即可
+
+### 打包后回到本地开发
+
+打包会把 `better-sqlite3` 编成 Electron 的 ABI（148）。如果之后 `npm run dev` / `npm run seed`
+报 `NODE_MODULE_VERSION` 不匹配，用系统 Node 重新编译一次即可恢复：
+
+```bash
+npm rebuild better-sqlite3
+```
 
 ## 目录速览
 

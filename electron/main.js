@@ -88,17 +88,17 @@ function waitForServer(url, timeoutMs = 30000) {
 
 function startNextServer() {
   const appRoot = getAppRoot();
-  const isWin = process.platform === "win32";
-  const nextBin = path.join(appRoot, "node_modules", ".bin", isWin ? "next.cmd" : "next");
+  // 直接用 Electron 自带的 Node 运行 next 的 JS 入口，而不是 .bin/next。
+  // .bin/next 依赖目标机器安装了系统 node（学生的干净电脑没有），且它是符号链接，
+  // 在部分打包场景下不可靠。用 process.execPath + ELECTRON_RUN_AS_NODE 完全自包含。
+  const nextEntry = path.join(appRoot, "node_modules", "next", "dist", "bin", "next");
 
   log("启动 Next.js 服务，工作目录:", appRoot);
 
-  serverProcess = spawn(nextBin, ["start", "-p", String(SERVER_PORT)], {
+  serverProcess = spawn(process.execPath, [nextEntry, "start", "-p", String(SERVER_PORT)], {
     cwd: appRoot,
-    env: { ...process.env },
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
     stdio: "pipe",
-    // Windows 上 .cmd 脚本必须通过 shell 执行
-    shell: isWin,
   });
 
   serverProcess.stdout.on("data", (data) => {

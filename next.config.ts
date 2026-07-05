@@ -12,7 +12,10 @@ const envPath = process.env.DOTENV_PATH || path.join(/*turbopackIgnore: true*/ p
 config({ path: envPath, override: true });
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // 把原生 / 重型模块声明为外部依赖，不打进 server bundle（原生 .node 本就无法内联）。
+  // 注意：Turbopack 仍会用 .next/node_modules 下的别名符号链接来解析它们，
+  // 该目录在 Electron 打包时会被丢弃，需由 electron/after-pack.js 补回（见其注释）。
+  serverExternalPackages: ["better-sqlite3", "@huggingface/transformers"],
 };
 
 export default nextConfig;

@@ -129,3 +129,37 @@ export const userStats = sqliteTable("user_stats", {
   streak: integer("streak").notNull().default(0),
   minutes: real("minutes").notNull().default(0),
 });
+
+// 通用 key-value 配置表，用于 UI 开关、默认 provider 等。
+// value 存 JSON，读取时按 key 做类型断言。
+export const settings = sqliteTable("settings", {
+  key: text("key").primaryKey(),
+  value: text("value", { mode: "json" }).$type<unknown>(),
+});
+
+// LLM provider 配置。id 是用户自定义别名（如 "ollama-local"）。
+// capabilities 标记该 provider 能承担的任务类型：
+//   - "light":    词汇干扰项、例句、听力脚本、阅读短文
+//   - "grading":  写作/口语评分、口语追问
+//   - "multimodal": 支持音频/图像输入（目前仅口语评分增强）
+export const providers = sqliteTable("providers", {
+  id: text("id").primaryKey(),
+  type: text("type", { enum: ["ollama", "openai", "deepseek"] }).notNull(),
+  name: text("name").notNull(),
+  baseUrl: text("base_url"),
+  apiKey: text("api_key"),
+  model: text("model").notNull(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
+  capabilities: text("capabilities", { mode: "json" }).$type<string[]>(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+});
+
+// 本地语音/多模态模型元数据，记录用户启用的模型及用途。
+// 实际模型文件由用户通过 Ollama 自行下载，这里只保存配置。
+export const voiceModels = sqliteTable("voice_models", {
+  id: text("id").primaryKey(), // 如 "ollama/gemma3:4b"
+  providerId: text("provider_id").references(() => providers.id),
+  purpose: text("purpose", { enum: ["multimodal_assess", "tts", "asr"] }),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
+});

@@ -1,5 +1,7 @@
-// 统一模型适配层：按任务路由到本地 Ollama（轻任务）或 DeepSeek API（评分类重任务）。
-// 换模型/换 provider 只改这个文件，不动业务代码。
+// 统一模型适配层：按任务路由到已配置的 provider。
+// 换模型/换 provider 只改配置（settings/providers 表或 .env），不动业务代码。
+
+import { resolveProviderForTask, getProviders, type ProviderConfig } from "./settings";
 
 export type LLMTask =
   | "distractor" // 词汇干扰项生成
@@ -10,11 +12,10 @@ export type LLMTask =
   | "speaking_grading" // 口语四维评分
   | "speaking_reply"; // 口语陪练考官追问
 
-const LOCAL_TASKS: ReadonlySet<LLMTask> = new Set([
-  "distractor",
-  "example",
-  "listening_script",
-  "reading_passage",
+const GRADING_TASKS: ReadonlySet<LLMTask> = new Set([
+  "essay_grading",
+  "speaking_grading",
+  "speaking_reply",
 ]);
 
 export interface CompleteOptions {
@@ -25,11 +26,12 @@ export interface CompleteOptions {
 export class LLMUnavailableError extends Error {}
 
 async function completeWithOllama(
+  provider: ProviderConfig,
   prompt: string,
   opts: CompleteOptions
 ): Promise<string> {
-  const host = process.env.OLLAMA_HOST ?? "http://localhost:11434";
-  const model = process.env.OLLAMA_MODEL ?? "qwen3:8b";
+  const host = provider.baseUrl ?? "http://localhost:11434";
+  const model = provider.model;
 
   let res: Response;
   try {
@@ -45,26 +47,32 @@ async function completeWithOllama(
     });
   } catch {
     throw new LLMUnavailableError(
-      `无法连接 Ollama（${host}）。请确认已安装并执行 \`ollama serve\`，且已拉取模型：ollama pull ${model}`
+      `无法连接 Ollama provider「${provider.name}」（${host}）。请确认已执行 \`ollama serve\`，且已拉取模型：ollama pull ${model}`
     );
   }
   if (!res.ok) {
-    throw new LLMUnavailableError(`Ollama 请求失败：${res.status} ${await res.text()}`);
+    throw new LLMUnavailableError(
+      `Ollama provider「${provider.name}」请求失败：${res.status} ${await res.text()}`
+    );
   }
   const data = (await res.json()) as { response: string };
   return data.response;
 }
 
-async function completeWithDeepSeek(
+async function completeWithOpenAI(
+  task: LLMTask,
+  provider: ProviderConfig,
   prompt: string,
   opts: CompleteOptions
 ): Promise<string> {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
+  const apiKey = provider.apiKey;
   if (!apiKey) {
-    throw new LLMUnavailableError("未设置 DEEPSEEK_API_KEY 环境变量，写作/口语评分需要它。");
+    throw new LLMUnavailableError(
+      `Provider「${provider.name}」未设置 API Key。`
+    );
   }
-  const baseUrl = process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com";
-  const model = process.env.DEEPSEEK_MODEL ?? "deepseek-chat";
+  const baseUrl = (provider.baseUrl ?? "https://api.openai.com").replace(/\/$/, "");
+  const model = provider.model;
 
   const res = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
@@ -74,7 +82,7 @@ async function completeWithDeepSeek(
     },
     body: JSON.stringify({
       model,
-      temperature: opts.temperature ?? 0,
+      temperature: opts.temperature ?? (GRADING_TASKS.has(task) ? 0 : 0.7),
       messages: [
         ...(opts.system ? [{ role: "system", content: opts.system }] : []),
         { role: "user", content: prompt },
@@ -82,7 +90,9 @@ async function completeWithDeepSeek(
     }),
   });
   if (!res.ok) {
-    throw new LLMUnavailableError(`DeepSeek 请求失败：${res.status} ${await res.text()}`);
+    throw new LLMUnavailableError(
+      `Provider「${provider.name}」请求失败：${res.status} ${await res.text()}`
+    );
   }
   const data = (await res.json()) as {
     choices: { message: { content: string } }[];
@@ -95,20 +105,45 @@ export async function complete(
   prompt: string,
   opts: CompleteOptions = {}
 ): Promise<string> {
-  if (!LOCAL_TASKS.has(task)) {
-    return completeWithDeepSeek(prompt, opts);
+  const provider = await resolveProviderForTask(task);
+  if (!provider) {
+    throw new LLMUnavailableError(
+      `没有可用的 LLM provider。请先在「设置」里配置，或在 .env 中设置 OLLAMA_HOST / DEEPSEEK_API_KEY。`
+    );
   }
 
-  // 本地任务优先走 Ollama（免费）；Ollama 不可用时，若配置了 DeepSeek key 则回退，
-  // 保证没装 Ollama 的机器也能开箱即用。
   try {
-    return await completeWithOllama(prompt, opts);
+    switch (provider.type) {
+      case "ollama":
+        return await completeWithOllama(provider, prompt, opts);
+      case "openai":
+      case "deepseek":
+        return await completeWithOpenAI(task, provider, prompt, opts);
+      default:
+        throw new LLMUnavailableError(`不支持的 provider 类型：${provider.type}`);
+    }
   } catch (err) {
-    if (err instanceof LLMUnavailableError && process.env.DEEPSEEK_API_KEY) {
-      return completeWithDeepSeek(prompt, opts);
+    // 轻任务失败时，若配置了 grading provider，尝试回退，保证没装 Ollama 也能用。
+    if (err instanceof LLMUnavailableError && !GRADING_TASKS.has(task)) {
+      const fallback = await findFallbackProvider();
+      if (fallback) {
+        return completeWithOpenAI(task, fallback, prompt, opts);
+      }
     }
     throw err;
   }
+}
+
+/** 找一个能做评分/重任务的 provider 作为轻任务失败时的回退。 */
+async function findFallbackProvider(): Promise<ProviderConfig | undefined> {
+  const all = await getProviders();
+  return all.find(
+    (p) =>
+      p.enabled &&
+      (p.type === "openai" || p.type === "deepseek") &&
+      p.apiKey &&
+      p.capabilities.includes("grading")
+  );
 }
 
 /** 要求模型输出严格 JSON；解析失败时加强提示重试一次。 */

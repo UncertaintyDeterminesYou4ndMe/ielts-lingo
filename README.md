@@ -25,6 +25,21 @@ npm run dev      # 打开 http://localhost:3000
 3. 从开始菜单或桌面快捷方式打开 `IELTS Lingo`
 4. 首次启动会稍慢（应用正在把内置词库复制到用户目录）
 
+### 可选：安装本地 Ollama（离线 AI）
+
+`.exe` 安装包本身不含 Ollama。如果学生想在没有 DeepSeek key 的情况下使用听力/阅读生成、
+或多模态口语评分，需要单独安装 Ollama：
+
+1. 下载 [OllamaSetup.exe](https://ollama.com/download/windows) 并安装。
+2. 打开 PowerShell，拉取模型：
+   ```powershell
+   ollama pull qwen3:8b
+   ```
+3. 确认任务栏出现 Ollama 羊驼图标，表示服务已运行。
+4. 打开 IELTS Lingo，进入「设置」→ 测试 `ollama-local` 连接。
+
+不需要离线 AI 的学生可以直接跳过这步，配好 DeepSeek key 即可。
+
 ### 配置 DeepSeek API Key
 
 写作评分、口语评分、以及 Ollama 未安装时的听力/阅读生成，需要 DeepSeek API key。
@@ -107,17 +122,32 @@ npm run start
 
 | 用途 | 方案 | 是否需要配置 |
 |---|---|---|
-| 听力脚本、阅读短文生成 | 本地 Ollama 优先，**没装 Ollama 时自动回退到 DeepSeek** | 二选一即可：装 Ollama（免费）或配好 DeepSeek key |
-| 写作评分、口语追问与评分 | DeepSeek API | 需要在 `.env` 填 `DEEPSEEK_API_KEY` |
+| 听力脚本、阅读短文生成 | 本地 Ollama 优先，**没装 Ollama 时自动回退到 DeepSeek / OpenAI 兼容服务** | 二选一即可：装 Ollama（免费）或在设置页配好 API key |
+| 写作评分、口语追问与评分 | DeepSeek API 或任意 OpenAI 兼容服务 | 在「设置」页添加 provider，或直接在 `.env` 填 key |
 | 词汇练习（干扰项、例句） | 纯本地逻辑，从词库同难度带抽题 | 不需要任何模型 |
 | 听力音频合成 | 微软 Edge TTS（`msedge-tts`，免费，无需 API key） | 不需要，联网即可 |
 | 口语语音转写 | 本地 Whisper（`@huggingface/transformers`，纯 JS/WASM 推理） | 不需要装 whisper.cpp，但需要系统装了 `ffmpeg`（解码浏览器录音） |
+| 口语发音/语调辅助评分（可选） | 本地多模态模型（如 Gemma 3 / Qwen2.5-VL，通过 Ollama） | 可选，不装不影响默认评分 |
 
-> **模型路由**：听力/阅读生成属于"轻任务"，代码里优先调用本地 Ollama；
-> 若 Ollama 未运行且已配置 `DEEPSEEK_API_KEY`，会自动回退到 DeepSeek，所以只配 DeepSeek
-> 也能完整使用全部功能。词汇练习完全不依赖任何模型。
+> **模型路由**：听力/阅读生成属于"轻任务"，默认优先调用本地 Ollama；
+> 若 Ollama 未运行且已配置云端 provider，会自动回退。写作/口语评分属于"重任务"，
+> 默认使用带 `grading` 能力的 provider。所有 provider 都可以在「设置」页增删改，
+> 无需重启应用。
+
+### 配置 LLM Provider
+
+打开应用内「设置」页（导航栏右侧），可以：
+
+- 添加 Ollama / DeepSeek / OpenAI 兼容 provider
+- 为每个 provider 勾选能力标签：`light`（轻任务）、`grading`（评分任务）、`multimodal`（多模态）
+- 点击「测试」验证连接
+- 设置默认 provider
+
+首次启动且数据库无 provider 时，应用会自动从 `.env` 导入默认配置，避免老用户丢失设置。
 
 ### 配置本地 Ollama
+
+#### macOS
 
 ```bash
 brew install ollama
@@ -125,11 +155,30 @@ ollama pull qwen3:8b
 ollama serve
 ```
 
+#### Windows
+
+1. 到 [Ollama 官网](https://ollama.com/download/windows) 下载 Windows 安装包 `OllamaSetup.exe`。
+2. 双击运行安装程序，按向导完成安装。
+3. 安装完成后，Ollama 会自动在后台运行（任务栏右下角会出现羊驼图标）。
+4. 打开 PowerShell 或 CMD，拉取模型：
+   ```powershell
+   ollama pull qwen3:8b
+   ```
+   如果命令找不到，先关闭并重新打开终端，或检查是否勾选了"Add Ollama to PATH"。
+5. 确认服务正在运行：
+   ```powershell
+   ollama list
+   ```
+   能看到 `qwen3:8b` 即表示可用。
+
+> Windows 上 Ollama 默认监听 `127.0.0.1:11434`。如果 IELTS Lingo 设置页测试连接失败，
+> 先检查任务栏是否有 Ollama 图标；没有的话从开始菜单启动 Ollama。
+
 复制 `.env.example` 为 `.env`，按需调整 `OLLAMA_HOST` / `OLLAMA_MODEL`。
 
 ### 配置 DeepSeek
 
-在 `.env` 里填：
+在「设置」页添加 DeepSeek provider，或在 `.env` 里填：
 
 ```
 DEEPSEEK_API_KEY=sk-xxx
@@ -142,6 +191,21 @@ DeepSeek key 是当前最省事的配置：填了它，词汇（本地逻辑）+
 注意：项目在 `next.config.ts` 里以 `.env` 为准强制覆盖（`dotenv override`），
 所以 shell 全局导出的同名变量（比如 `~/.zshrc` 里的旧 `DEEPSEEK_API_KEY`）不会干扰应用，
 跨电脑行为一致。但项目外的脚本不经过 next.config，仍会读到 shell 里的值。
+
+### 配置本地多模态模型（可选）
+
+如果想让口语评分参考真实发音，可以在设置页启用多模态模型，并在本地 Ollama 拉取一个
+支持多模态的模型：
+
+```bash
+ollama pull gemma3:4b
+# 或
+ollama pull qwen2.5-vl:7b
+```
+
+然后在「设置」页给该 Ollama provider 勾选 `multimodal` 能力，并在多模态区域点击「检测」。
+评分时会把考生音频一起传给模型做辅助判断；若模型不支持音频输入或请求失败，会自动回退
+到文字评分。
 
 ### 确认 ffmpeg 已安装（口语模块需要）
 
@@ -221,7 +285,9 @@ npm rebuild better-sqlite3
 ## 目录速览
 
 - `lib/db/schema.ts` — 全部数据表（Drizzle + SQLite，文件在 `data/app.db`）
-- `lib/llm.ts` — 模型适配层，`complete(task, prompt)` 按任务路由到 Ollama 或 DeepSeek
+- `lib/llm.ts` — 模型适配层，`complete(task, prompt)` 按任务路由到已配置的 provider
+- `lib/settings.ts` — provider 配置读写与任务路由
+- `lib/multimodal.ts` — 本地多模态模型辅助评分
 - `lib/fsrs.ts` — 间隔重复算法封装（ts-fsrs / FSRS-6）
 - `lib/vocab-engine.ts` — 词汇练习的题目生成（4 种题型）
 - `lib/tts.ts` / `lib/asr.ts` — 本地语音合成/转写
@@ -237,6 +303,7 @@ npm rebuild better-sqlite3
 - 约 28% 的词库词条因缺少频率数据被兜底分到中间难度带（Lv.3），词表难度分级不是 100% 精确。
 - Unit 标题目前是占位符（"词汇 Lv.X · 第N课"），场景化主题命名（租房/环境/科技…）需要
   接入 Ollama 做分类后生成，目前还没跑这一步。
-- 口语的 Pronunciation 评分只是基于文字转写的粗略估计（模型看不到真实发音），
-  评分结果里会明确标注这一点仅供参考。
+- 口语的 Pronunciation 评分默认只是基于文字转写的粗略估计（模型看不到真实发音），
+  评分结果里会明确标注这一点仅供参考。启用了本地多模态模型后，模型会额外参考音频输入，
+  但效果取决于具体模型与 Ollama 版本。
 - 听力/阅读素材是 AI 现场生成的模拟题，不是雅思真题（真题有版权，未内置）。

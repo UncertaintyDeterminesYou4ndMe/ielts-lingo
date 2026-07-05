@@ -7,6 +7,7 @@ const LINKS = [
   { href: "/reading", label: "阅读" },
   { href: "/speaking", label: "口语" },
   { href: "/stats", label: "统计" },
+  { href: "/settings", label: "设置" },
 ];
 
 export default function Nav() {

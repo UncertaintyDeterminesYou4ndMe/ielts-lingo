@@ -1,17 +1,37 @@
 "use server";
 
+import path from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
 import { db } from "@/lib/db";
 import { speakingSessions } from "@/lib/db/schema";
 import { transcribeAudio } from "@/lib/asr";
 import { completeJSON } from "@/lib/llm";
 import { findTopicById } from "@/lib/speaking-topics";
+import { completeMultimodal, isMultimodalEnabled, resolveMultimodalProvider } from "@/lib/multimodal";
 
-export async function transcribeTurn(formData: FormData): Promise<{ text: string }> {
+function ensureAudioDir() {
+  const dir = path.join(process.cwd(), "data", "audio", "speaking");
+  return mkdir(dir, { recursive: true });
+}
+
+function audioFileName(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.webm`;
+}
+
+export async function transcribeTurn(
+  formData: FormData
+): Promise<{ text: string; audioPath: string }> {
   const file = formData.get("audio");
   if (!(file instanceof File)) throw new Error("没有收到音频");
   const buf = Buffer.from(await file.arrayBuffer());
   const text = await transcribeAudio(buf);
-  return { text };
+
+  await ensureAudioDir();
+  const relativePath = path.join("data", "audio", "speaking", audioFileName());
+  const absolutePath = path.join(process.cwd(), relativePath);
+  await writeFile(absolutePath, buf);
+
+  return { text, audioPath: relativePath };
 }
 
 export interface SpeakingTranscript {
@@ -51,7 +71,8 @@ export interface SpeakingFeedback {
 
 export async function gradeSpeakingSession(
   topicId: string,
-  transcript: SpeakingTranscript
+  transcript: SpeakingTranscript,
+  audioPaths: string[] = []
 ): Promise<{ id: number }> {
   const transcriptText = [
     "Part 1:",
@@ -64,9 +85,12 @@ export async function gradeSpeakingSession(
 
   const system =
     "你是一名资深雅思口语考官，按官方四维标准（Fluency and Coherence / Lexical Resource / " +
-    "Grammatical Range and Accuracy / Pronunciation）评分。你只能看到文字转写，无法真正听到语音，" +
-    "因此 Pronunciation 只能基于用词选择和转写通顺程度做粗略估计，必须在 summary 里明确提醒这一点仅供参考。" +
-    "只输出 JSON。";
+    "Grammatical Range and Accuracy / Pronunciation）评分。";
+
+  const textOnlySystem =
+    system +
+    "你只能看到文字转写，无法真正听到语音，因此 Pronunciation 只能基于用词选择和转写通顺程度做粗略估计，" +
+    "必须在 summary 里明确提醒这一点仅供参考。只输出 JSON。";
 
   const prompt = `以下是一次雅思口语模拟的完整转写：
 
@@ -84,7 +108,34 @@ ${transcriptText}
   "improvements": ["改进点1", "改进点2", "改进点3"]
 }`;
 
-  const feedback = await completeJSON<SpeakingFeedback>("speaking_grading", prompt, { system });
+  let feedback: SpeakingFeedback;
+  const mmProvider = await resolveMultimodalProvider();
+
+  if (mmProvider && audioPaths.length > 0 && (await isMultimodalEnabled())) {
+    try {
+      const mmSystem =
+        system +
+        "本次评分除了文字转写，还提供了考生的原始音频，请结合发音、语调、流利度给出更准确的评分，" +
+        "尤其是 Pronunciation 维度。只输出 JSON。";
+      const raw = await completeMultimodal(
+        mmProvider.model,
+        mmProvider.baseUrl ?? "http://localhost:11434",
+        prompt,
+        audioPaths,
+        { system: mmSystem }
+      );
+      feedback = JSON.parse(raw) as SpeakingFeedback;
+    } catch {
+      // 多模态评分失败时回退到文字评分
+      feedback = await completeJSON<SpeakingFeedback>("speaking_grading", prompt, {
+        system: textOnlySystem,
+      });
+    }
+  } else {
+    feedback = await completeJSON<SpeakingFeedback>("speaking_grading", prompt, {
+      system: textOnlySystem,
+    });
+  }
 
   const now = new Date();
   const result = db
@@ -97,7 +148,7 @@ ${transcriptText}
       bandGrammar: feedback.bandGrammar,
       bandPronunciation: feedback.bandPronunciation,
       feedbackJson: feedback,
-      audioPath: null,
+      audioPath: audioPaths[0] ?? null,
       createdAt: now,
     })
     .run();

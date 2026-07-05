@@ -22,6 +22,12 @@ type Stage =
   | { kind: "grading" }
   | { kind: "error"; message: string };
 
+interface TurnAnswer {
+  question: string;
+  answer: string;
+  audioPath: string;
+}
+
 const PART2_PREP_SECONDS = 60;
 
 function useRecorder() {
@@ -63,18 +69,17 @@ function useRecorder() {
   return { start, stop, isRecording };
 }
 
-async function transcribeBlob(blob: Blob): Promise<string> {
+async function transcribeBlob(blob: Blob): Promise<{ text: string; audioPath: string }> {
   const formData = new FormData();
   formData.append("audio", blob, "answer.webm");
-  const { text } = await transcribeTurn(formData);
-  return text;
+  return transcribeTurn(formData);
 }
 
 export default function SpeakingSession({ topic }: { topic: SpeakingTopic }) {
   const [stage, setStage] = useState<Stage>({ kind: "intro" });
-  const [part1Answers, setPart1Answers] = useState<{ question: string; answer: string }[]>([]);
-  const [part2Answer, setPart2Answer] = useState("");
-  const [part3Answers, setPart3Answers] = useState<{ question: string; answer: string }[]>([]);
+  const [part1Answers, setPart1Answers] = useState<TurnAnswer[]>([]);
+  const [part2Answer, setPart2Answer] = useState<TurnAnswer | null>(null);
+  const [part3Answers, setPart3Answers] = useState<TurnAnswer[]>([]);
   const [liveText, setLiveText] = useState("");
   const recorder = useRecorder();
   const router = useRouter();
@@ -91,12 +96,16 @@ export default function SpeakingSession({ topic }: { topic: SpeakingTopic }) {
     speak(topic.part1Questions[0]);
   }
 
-  async function finishRecordingAndAdvance(question: string, onAnswer: (text: string) => void, next: () => void) {
+  async function finishRecordingAndAdvance(
+    question: string,
+    onAnswer: (answer: TurnAnswer) => void,
+    next: () => void
+  ) {
     setLiveText("转写中...");
     const blob = await recorder.stop();
-    const text = await transcribeBlob(blob);
+    const { text, audioPath } = await transcribeBlob(blob);
     setLiveText("");
-    onAnswer(text);
+    onAnswer({ question, answer: text, audioPath });
     next();
   }
 
@@ -105,7 +114,7 @@ export default function SpeakingSession({ topic }: { topic: SpeakingTopic }) {
     const question = topic.part1Questions[stage.index];
     await finishRecordingAndAdvance(
       question,
-      (text) => setPart1Answers((a) => [...a, { question, answer: text }]),
+      (answer) => setPart1Answers((a) => [...a, answer]),
       () => {
         const next = stage.index + 1;
         if (next < topic.part1Questions.length) {
@@ -151,9 +160,9 @@ export default function SpeakingSession({ topic }: { topic: SpeakingTopic }) {
     if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
     setLiveText("转写中...");
     const blob = await recorder.stop();
-    const text = await transcribeBlob(blob);
+    const { text, audioPath } = await transcribeBlob(blob);
     setLiveText("");
-    setPart2Answer(text);
+    setPart2Answer({ question: topic.part2.cueCard, answer: text, audioPath });
     setStage({ kind: "part3-loading" });
     try {
       const questions = await generatePart3Questions(topic.id, text);
@@ -170,7 +179,7 @@ export default function SpeakingSession({ topic }: { topic: SpeakingTopic }) {
     const question = questions[index];
     await finishRecordingAndAdvance(
       question,
-      (text) => setPart3Answers((a) => [...a, { question, answer: text }]),
+      (answer) => setPart3Answers((a) => [...a, answer]),
       () => {
         const next = index + 1;
         if (next < questions.length) {
@@ -185,13 +194,26 @@ export default function SpeakingSession({ topic }: { topic: SpeakingTopic }) {
 
   async function finishSession() {
     setStage({ kind: "grading" });
+
+    if (!part2Answer) {
+      setStage({ kind: "error", message: "Part 2 回答缺失" });
+      return;
+    }
+
     const transcript: SpeakingTranscript = {
-      part1: part1Answers,
-      part2: { cueCard: topic.part2.cueCard, answer: part2Answer },
-      part3: part3Answers,
+      part1: part1Answers.map((a) => ({ question: a.question, answer: a.answer })),
+      part2: { cueCard: part2Answer.question, answer: part2Answer.answer },
+      part3: part3Answers.map((a) => ({ question: a.question, answer: a.answer })),
     };
+
+    const audioPaths = [
+      ...part1Answers.map((a) => a.audioPath),
+      part2Answer.audioPath,
+      ...part3Answers.map((a) => a.audioPath),
+    ];
+
     try {
-      const { id } = await gradeSpeakingSession(topic.id, transcript);
+      const { id } = await gradeSpeakingSession(topic.id, transcript, audioPaths);
       router.push(`/speaking/sessions/${id}`);
     } catch (e) {
       setStage({ kind: "error", message: e instanceof Error ? e.message : "评分失败" });
